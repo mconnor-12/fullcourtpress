@@ -902,7 +902,10 @@ input,select{font-family:inherit;}
       <strong style="color:#4ecca3;">🔍 SYNC TEST MODE</strong> · 
       <span id="debugStatus" style="color:#95e1d3;">Waiting for first sync...</span>
     </div>
-    <button onclick="document.getElementById('debugPanel').style.display='none'" style="background:#e74c3c;color:white;border:none;padding:6px 12px;cursor:pointer;border-radius:4px;font-weight:bold;">✕ HIDE</button>
+    <div style="display:flex;gap:8px;">
+      <button onclick="pullFromSheet()" style="background:#4ecca3;color:#1a1a2e;border:none;padding:8px 16px;cursor:pointer;border-radius:4px;font-weight:bold;font-size:13px;">↻ SYNC FROM SHEET</button>
+      <button onclick="document.getElementById('debugPanel').style.display='none'" style="background:#e74c3c;color:white;border:none;padding:6px 12px;cursor:pointer;border-radius:4px;font-weight:bold;">✕ HIDE</button>
+    </div>
   </div>
   <div id="debugLog" style="max-height:120px;overflow-y:auto;font-size:11px;line-height:1.4;background:#0f0f1e;padding:8px;border-radius:4px;"></div>
 </div>
@@ -2832,24 +2835,58 @@ async function pushAllToSheet(){
 
 async function pullFromSheet(){
   if (!haveScript()){ toast('Configure Script URL first', 'err'); return; }
+  
+  // Helper to log to debug panel
+  function debugLog(msg, isError = false) {
+    console.log(msg);
+    const panel = document.getElementById('debugLog');
+    const status = document.getElementById('debugStatus');
+    if (panel) {
+      const time = new Date().toLocaleTimeString();
+      const color = isError ? '#e74c3c' : '#4ecca3';
+      panel.innerHTML += `<div style="color:${color};margin-bottom:4px;">[${time}] ${msg}</div>`;
+      panel.scrollTop = panel.scrollHeight;
+    }
+    if (status && !isError) {
+      status.textContent = 'Synced from sheet';
+      status.style.color = '#4ecca3';
+    }
+  }
+  
+  debugLog('📥 Pulling data from sheet...');
   setSyncStatus('wait', 'Pulling…');
   const data = await getFromScript('state');
-  if (!data){ toast('Pull failed — check Setup tab', 'err'); return; }
+  
+  if (!data){ 
+    debugLog('❌ Pull failed - check Setup tab', true);
+    toast('Pull failed — check Setup tab', 'err'); 
+    return; 
+  }
   
   // Hydrate points - CRITICAL: Set all students, not just existing ones!
   if (data.points){
+    const studentCount = Object.keys(data.points).length;
+    debugLog(`   Found ${studentCount} students with point data`);
     Object.keys(data.points).forEach(id => {
       POINTS[id] = data.points[id];  // Always set, even if POINTS[id] didn't exist before
     });
+    debugLog(`   ✅ Loaded points for ${studentCount} students`);
   }
   
   if (data.seating){
     HOMEROOMS.forEach(hr => { if (data.seating[hr]) SEATING[hr] = data.seating[hr]; });
+    debugLog('   ✅ Loaded seating arrangements');
   }
-  if (data.log) LOG = data.log.slice(0,500);
+  
+  if (data.log) {
+    LOG = data.log.slice(0,500);
+    debugLog(`   ✅ Loaded ${data.log.length} log entries`);
+  }
+  
   setSyncStatus('ok','Pulled · '+new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}));
   rerenderAll();
   toast('Data synced from Sheet ✓', 'success');
+  debugLog('🎉 Pull complete - UI refreshed!');
 }
 
 // ═══════════════════════════════════════════════════════════════════
