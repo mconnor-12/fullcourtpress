@@ -895,6 +895,20 @@ input,select{font-family:inherit;}
 </head>
 <body>
 
+<!-- ═══════════════════════ DEBUG PANEL ═══════════════════════ -->
+<div style="position:fixed;top:0;left:0;right:0;background:#1a1a2e;color:#eee;padding:12px;z-index:10000;font-family:'Courier New',monospace;font-size:12px;border-bottom:3px solid #4ecca3;box-shadow:0 2px 10px rgba(0,0,0,0.5);" id="debugPanel">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+    <div>
+      <strong style="color:#4ecca3;">🔍 SYNC TEST MODE</strong> · 
+      <span id="debugStatus" style="color:#95e1d3;">Waiting for first sync...</span>
+    </div>
+    <button onclick="document.getElementById('debugPanel').style.display='none'" style="background:#e74c3c;color:white;border:none;padding:6px 12px;cursor:pointer;border-radius:4px;font-weight:bold;">✕ HIDE</button>
+  </div>
+  <div id="debugLog" style="max-height:120px;overflow-y:auto;font-size:11px;line-height:1.4;background:#0f0f1e;padding:8px;border-radius:4px;"></div>
+</div>
+
+<div style="margin-top:100px;"><!-- Spacer for debug panel --></div>
+
 <!-- ═══════════════════════ NAV ═══════════════════════ -->
 <div class="nav">
   <div class="brand">
@@ -2711,19 +2725,60 @@ function haveScript(){ return SCRIPT_URL && SCRIPT_URL.includes('/exec'); }
 
 async function postToScript(action, payload){
   if (!haveScript()) return {ok:false, reason:'no-script'};
+  
+  // Helper to log to visible debug panel
+  function debugLog(msg, isError = false) {
+    console.log(msg);
+    const panel = document.getElementById('debugLog');
+    const status = document.getElementById('debugStatus');
+    if (panel) {
+      const time = new Date().toLocaleTimeString();
+      const color = isError ? '#e74c3c' : '#4ecca3';
+      panel.innerHTML += `<div style="color:${color};margin-bottom:4px;">[${time}] ${msg}</div>`;
+      panel.scrollTop = panel.scrollHeight;
+    }
+    if (status) {
+      status.textContent = isError ? '❌ Error - see log below' : '✅ Last sync successful';
+      status.style.color = isError ? '#e74c3c' : '#4ecca3';
+    }
+  }
+  
+  debugLog('🚀 Starting sync...');
+  debugLog(`   Action: ${action}`);
+  debugLog(`   URL: ${SCRIPT_URL.substring(0, 50)}...`);
+  
   try {
+    // CRITICAL: Google Apps Script doesn't handle CORS preflight for POST!
+    // Solution: Send as GET with payload in URL query string
     const body = JSON.stringify({action, payload});
-    // POST to Apps Script with proper CORS to read response
-    const res = await fetch(SCRIPT_URL, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body,
+    const encodedPayload = encodeURIComponent(body);
+    const url = `${SCRIPT_URL}?payload=${encodedPayload}`;
+    
+    debugLog(`   Encoded payload length: ${encodedPayload.length} chars`);
+    debugLog('   Sending GET request...');
+    
+    const res = await fetch(url, {
+      method: 'GET',
+      mode: 'cors',
     });
-    // Now we can read the response
+    
+    debugLog(`   ✅ Response received! Status: ${res.status} ${res.statusText}`);
+    
+    const data = await res.json();
+    debugLog(`   ✅ JSON parsed: ${JSON.stringify(data).substring(0, 100)}`);
+    
+    if (data.error) {
+      debugLog(`   ⚠️ Server returned error: ${data.error}`, true);
+    } else {
+      debugLog('   🎉 Sync completed successfully!');
+    }
+    
     setSyncStatus('ok','Synced · '+new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}));
-    return {ok:true};
+    return data;
   } catch (e){
-    console.error('postToScript error:', action, e);
+    debugLog(`   ❌ FETCH FAILED: ${e.message}`, true);
+    debugLog(`   Error details: ${e.name} - ${e.stack}`, true);
+    console.error('  Full error object:', e);
     setSyncStatus('err', 'Error: '+e.message.slice(0,30));
     toast('Sync error: '+e.message, 'err');
     return {ok:false, reason:e.message};
@@ -2780,12 +2835,14 @@ async function pullFromSheet(){
   setSyncStatus('wait', 'Pulling…');
   const data = await getFromScript('state');
   if (!data){ toast('Pull failed — check Setup tab', 'err'); return; }
-  // Hydrate points
+  
+  // Hydrate points - CRITICAL: Set all students, not just existing ones!
   if (data.points){
     Object.keys(data.points).forEach(id => {
-      if (POINTS[id]) POINTS[id] = data.points[id];
+      POINTS[id] = data.points[id];  // Always set, even if POINTS[id] didn't exist before
     });
   }
+  
   if (data.seating){
     HOMEROOMS.forEach(hr => { if (data.seating[hr]) SEATING[hr] = data.seating[hr]; });
   }
