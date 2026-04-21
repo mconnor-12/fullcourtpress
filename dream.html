@@ -946,6 +946,12 @@ input,select{font-family:inherit;}
       </div>
       <div class="court-title-meta" id="raceMeta">0 pts logged</div>
     </div>
+    <div style="display:flex;justify-content:center;gap:8px;margin-bottom:12px;" id="homeroomFilter">
+      <button class="court-filter-btn active" onclick="setRaceHomeroom('all', this)">🏀 All Teams</button>
+      <button class="court-filter-btn" onclick="setRaceHomeroom('Columbia', this)">🌊 Columbia</button>
+      <button class="court-filter-btn" onclick="setRaceHomeroom('Emory', this)">🔥 Emory</button>
+      <button class="court-filter-btn" onclick="setRaceHomeroom('Vanderbilt', this)">🪨 Vanderbilt</button>
+    </div>
     <div class="court-container">
       <svg class="court-svg" viewBox="0 0 2400 1200" preserveAspectRatio="xMidYMid meet" id="courtSvg">
         <!-- court markings added by JS -->
@@ -1297,16 +1303,16 @@ const QUARTERS = ['q1','q2','q3','q4'];
 const Q_LABEL = {q1:'Q1', q2:'Q2', q3:'Q3', q4:'Q4'};
 
 const CATEGORIES = [
-  {k:'focus',    icon:'🎯', label:'Focus',          pts:25},
-  {k:'effort',   icon:'💪', label:'Effort',         pts:25},
-  {k:'showwork', icon:'✏️', label:'Show All Work',  pts:25},
-  {k:'accuracy', icon:'✅', label:'Accuracy',       pts:25},
-  {k:'wordprob', icon:'📖', label:'Word Problems',  pts:25},
-  {k:'pacing',   icon:'⏱️', label:'Strong Pacing',  pts:25},
-  {k:'partic',   icon:'🙋', label:'Participation',  pts:25},
-  {k:'leader',   icon:'👑', label:'Leadership',     pts:25},
-  {k:'habits',   icon:'📓', label:'Habits',         pts:25},
-  {k:'mastery',  icon:'🏆', label:'Mastery',        pts:25},
+  {k:'focus',    icon:'🎯', label:'Focus',          pts:1},
+  {k:'effort',   icon:'💪', label:'Effort',         pts:1},
+  {k:'showwork', icon:'✏️', label:'Show All Work',  pts:2},
+  {k:'accuracy', icon:'✅', label:'Accuracy',       pts:2},
+  {k:'wordprob', icon:'📖', label:'Word Problems',  pts:2},
+  {k:'pacing',   icon:'⏱️', label:'Strong Pacing',  pts:1},
+  {k:'partic',   icon:'🙋', label:'Participation',  pts:1},
+  {k:'leader',   icon:'👑', label:'Leadership',     pts:2},
+  {k:'habits',   icon:'📓', label:'Habits',         pts:1},
+  {k:'mastery',  icon:'🏆', label:'Mastery',        pts:3},
 ];
 const CAT_BY_KEY = Object.fromEntries(CATEGORIES.map(c => [c.k, c]));
 
@@ -1391,6 +1397,7 @@ let TEA_HOMEROOM = 'all';
 let TEA_VIEW = 'current';
 let RACE_FILTER = 'total';   // 'total' | 'q1'..'q4'
 let RACE_MODE = 'day';       // 'day' = ACTIVE_DATE, 'tournament' = cumulative
+let RACE_HOMEROOM_FILTER = 'all'; // 'all' | 'Columbia' | 'Emory' | 'Vanderbilt'
 let SEAT_HR = 'Columbia';
 let SCRIPT_URL = localStorage.getItem('fcr_script_url') || '';
 let PANEL_STUDENT = null;
@@ -1488,7 +1495,10 @@ function raceTeamPts(hr){
   }
 }
 function maxRacePts(){
-  return ROSTER.reduce((m,s) => Math.max(m, racePtsFor(s)), 0);
+  const studentsToCheck = RACE_HOMEROOM_FILTER === 'all' 
+    ? ROSTER 
+    : ROSTER.filter(s => s.homeroom === RACE_HOMEROOM_FILTER);
+  return studentsToCheck.reduce((m,s) => Math.max(m, racePtsFor(s)), 0);
 }
 function totalAllPoints(){
   return ROSTER.reduce((a,s) => a + studentTournamentPts(s.id), 0);
@@ -1701,11 +1711,18 @@ function buildCourtSvg(){
 }
 
 // Y-position per student: stratified into team lanes, spread within band
-function ballY(student){
-  // Team center bands on 1200-tall court: Columbia 26.7%, Emory 50%, Vanderbilt 73.3%
+function ballY(student, filteredStudents){
+  // If filtering by homeroom, spread all students evenly across full court height
+  if (RACE_HOMEROOM_FILTER !== 'all' && filteredStudents){
+    const myIdx = filteredStudents.findIndex(s => s.id === student.id);
+    const t = (myIdx + 0.5) / filteredStudents.length;
+    return 10 + t * 80;  // Use 10%-90% of court height
+  }
+  
+  // Default: Team center bands on 1200-tall court: Columbia 26.7%, Emory 50%, Vanderbilt 73.3%
   const centers = [26.7, 50, 73.3];
   const teamIdx = HOMEROOMS.indexOf(student.homeroom);
-  const teammates = ROSTER.filter(s => s.homeroom === student.homeroom);
+  const teammates = filteredStudents || ROSTER.filter(s => s.homeroom === student.homeroom);
   const myIdx = teammates.findIndex(s => s.id === student.id);
   const bandHeight = 18;  // +/- 9% from center
   const center = centers[teamIdx];
@@ -1743,6 +1760,13 @@ function setRaceMode(mode, btn){
   document.querySelectorAll('#tourneyModeToggle .tourney-mode-btn').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
   rerenderAll();
+}
+
+function setRaceHomeroom(homeroom, btn){
+  RACE_HOMEROOM_FILTER = homeroom;
+  document.querySelectorAll('#homeroomFilter .court-filter-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  rerenderAll();  // Full re-render to update leaderboards and remove hidden students
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1826,14 +1850,20 @@ function renderBalls(){
   const currentMax = maxRacePts();
   // Use target as scale, but if someone exceeds it, expand to fit
   const mx = Math.max(target, currentMax);
+  
+  // Filter students by homeroom if filter is active
+  const studentsToShow = RACE_HOMEROOM_FILTER === 'all' 
+    ? ROSTER 
+    : ROSTER.filter(s => s.homeroom === RACE_HOMEROOM_FILTER);
+  
   const need = new Set();
-  ROSTER.forEach(s => {
+  studentsToShow.forEach(s => {
     // Skip absent students on the race view
     if (ABSENT.has(s.id)) return;
     need.add(s.id);
     const pts = racePtsFor(s);
     const pctX = Math.max(2, Math.min(97, 4 + (pts / mx) * 92 + ballXJitter(s)));
-    const pctY = ballY(s);
+    const pctY = ballY(s, studentsToShow);  // Pass filtered students for Y positioning
     let el = document.getElementById('bw-'+s.id);
     if (!el){
       el = document.createElement('div');
@@ -1881,7 +1911,11 @@ function popBall(id, pts){
 //   RACE LEADERBOARDS
 // ═══════════════════════════════════════════════════════════════════
 function renderTopScorers(){
-  const scored = ROSTER
+  const studentsToShow = RACE_HOMEROOM_FILTER === 'all' 
+    ? ROSTER 
+    : ROSTER.filter(s => s.homeroom === RACE_HOMEROOM_FILTER);
+  
+  const scored = studentsToShow
     .map(s => ({s, pts: racePtsFor(s)}))
     .filter(x => x.pts > 0)
     .sort((a,b) => b.pts - a.pts)
@@ -2111,7 +2145,12 @@ function updateRosterPointsPanel(){
     return;
   }
   
-  const totalPoints = Array.from(ROSTER_CATEGORIES.values()).reduce((a,b) => a+b, 0) * 25;
+  // Calculate total points based on actual category values
+  let totalPoints = 0;
+  ROSTER_CATEGORIES.forEach((count, catKey) => {
+    const cat = CATEGORIES.find(c => c.k === catKey);
+    if (cat) totalPoints += count * cat.pts;
+  });
   
   panel.innerHTML = `
     <div style="padding:16px;">
@@ -2142,7 +2181,7 @@ function updateRosterPointsPanel(){
                   style="width:45px;text-align:center;background:var(--bg4);border:1px solid var(--border2);color:var(--text);padding:4px;border-radius:3px;">
                 <button onclick="adjustRosterCategory('${cat.k}', 1);" class="roster-adj-btn">+</button>
               </div>
-              <div style="font-size:9px;color:var(--text3);margin-top:2px;">× 25 = ${count * 25} pts</div>
+              <div style="font-size:9px;color:var(--text3);margin-top:2px;">× ${cat.pts} = ${count * cat.pts} pts</div>
             </div>
           `;
         }).join('')}
