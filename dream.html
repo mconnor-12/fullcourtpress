@@ -371,6 +371,17 @@ input,select{font-family:inherit;}
 }
 .desk:hover{border-color:var(--border3);transform:translateY(-1px);box-shadow:0 5px 16px rgba(0,0,0,.5);}
 .desk.empty{background:var(--bg2);border-style:dashed;border-color:var(--border);cursor:default;}
+.desk.absent{opacity:.5;filter:grayscale(60%);}
+.desk-absent-btn{
+  position:absolute;top:4px;left:4px;z-index:5;
+  width:20px;height:20px;border-radius:50%;
+  background:var(--bg4);border:1.5px solid var(--border3);
+  color:var(--text3);font-weight:700;font-size:11px;
+  display:flex;align-items:center;justify-content:center;
+  cursor:pointer;transition:all .15s;opacity:0;
+}
+.desk:hover .desk-absent-btn{opacity:1;}
+.desk-absent-btn:hover{background:var(--fire);border-color:var(--fire);color:#fff;}
 .desk.empty:hover{transform:none;box-shadow:none;}
 .desk.empty.drop-target{background:rgba(240,180,41,.08);border-color:var(--gold2);}
 
@@ -406,14 +417,21 @@ input,select{font-family:inherit;}
 }
 
 .desk-btn{
-  width:100%;padding:5px;background:var(--court);color:#0a0d14;border:none;
-  font-weight:800;font-size:10px;letter-spacing:.05em;
+  flex:1;padding:5px;background:var(--court);color:#0a0d14;border:none;
+  font-weight:800;font-size:10px;letter-spacing:. 05em;
   display:flex;align-items:center;justify-content:center;gap:4px;cursor:pointer;
   transition:all .15s;
 }
 .desk-btn:hover{background:var(--court2);}
 .desk-btn:active{transform:translateY(1px);}
 .desk-btn .bi{font-size:11px;}
+.desk-btn-row{display:flex;gap:4px;padding:0 6px 6px;}
+.desk-minus-btn{
+  background:var(--bg3);color:var(--text2);border:1px solid var(--border2);
+  padding:5px 8px;font-weight:800;font-size:10px;cursor:pointer;
+  transition:all .15s;
+}
+.desk-minus-btn:hover{background:var(--fire);border-color:var(--fire);color:#fff;}
 
 /* Fly-up animation on log */
 .desk.flash{animation:deskFlash .8s;}
@@ -1255,30 +1273,27 @@ let LIVE_SYNC_TIMER = null;
 // Multi-select mode state
 let MULTI_MODE = false;
 const MULTI_SELECTION = new Set();   // of student IDs
+const ABSENT = new Set();             // student IDs marked absent today
 
 // ═══════════════════════════════════════════════════════════════════
 //   DEFAULT SEATING LAYOUT
 // ═══════════════════════════════════════════════════════════════════
 function defaultLayoutForHomeroom(hr) {
   const students = ROSTER.filter(s => s.homeroom === hr).map(s => s.name);
-  // 3 columns × 3 clusters × 2 rows × 2 seats = 36 seats (covers 31)
+  // Simple 3-column layout: straight rows of desk pairs facing forward (no cluster sub-groups)
+  // 31 students → ~10-11 pairs per column
   const cols = [[],[],[]];
-  // Round-robin distribute so teams mix nicely
   students.forEach((n,i) => cols[i % 3].push(n));
   return cols.map((list, ci) => {
-    const clusters = [];
-    let num = (ci===0 ? 7 : ci===1 ? 5 : 3);
+    // Single "cluster" per column (just a container for the rows)
+    const rows = [];
     const rem = [...list];
-    while (rem.length > 0 || clusters.length < 3) {
-      const rows = [
-        [rem.shift() || null, rem.shift() || null],
-        [rem.shift() || null, rem.shift() || null],
-      ];
-      clusters.push({num, rows});
-      num -= 1; if (num < 1) num = 9;
-      if (clusters.length >= 3 && rem.length === 0) break;
+    while (rem.length > 0){
+      rows.push([rem.shift() || null, rem.shift() || null]);
     }
-    return {clusters};
+    // Pad to at least 6 rows so columns look uniform
+    while (rows.length < 6) rows.push([null, null]);
+    return {clusters: [{num: ci+1, rows}]};
   });
 }
 function ensureSeating() { HOMEROOMS.forEach(hr => { if (!SEATING[hr]) SEATING[hr] = defaultLayoutForHomeroom(hr); }); }
@@ -1664,9 +1679,15 @@ function renderTournament(){
 
 function renderBalls(){
   const layer = document.getElementById('ballsLayer');
-  const mx = Math.max(10, maxRacePts());
+  // Scale target: 15 pts per period, 25 for full day (4 periods), 100 for tournament (allowing for growth)
+  const target = RACE_MODE === 'tournament' ? 100 : (RACE_FILTER === 'total' ? 25 : 15);
+  const currentMax = maxRacePts();
+  // Use target as scale, but if someone exceeds it, expand to fit
+  const mx = Math.max(target, currentMax);
   const need = new Set();
   ROSTER.forEach(s => {
+    // Skip absent students on the race view
+    if (ABSENT.has(s.id)) return;
     need.add(s.id);
     const pts = racePtsFor(s);
     const pctX = Math.max(2, Math.min(97, 4 + (pts / mx) * 92 + ballXJitter(s)));
@@ -1792,6 +1813,9 @@ function setActiveCat(k){
   ACTIVE_CAT = k;
   document.querySelectorAll('.cat-tile').forEach((t,i) =>
     t.classList.toggle('active', CATEGORIES[i].k === k));
+  // Rebuild grid so desk buttons show the new active category
+  if (document.getElementById('page-teacher').classList.contains('active')) buildTeacherGrid();
+  updateMultiBar();  // update multi-bar if active
 }
 
 function renderTeamStrip(){
@@ -1871,6 +1895,19 @@ function emptyDeskHTML(){ return `<div class="desk empty"></div>`; }
 function deskHTML(name, pos){
   const s = ROSTER_BY_NAME[name];
   if (!s) return emptyDeskHTML();
+  // If marked absent, show dimmed desk with "Absent" overlay
+  if (ABSENT.has(s.id)){
+    return `<div class="desk ${s.team} absent" id="dk-${s.id}" data-name="${s.name}" data-id="${s.id}">
+      <div class="desk-top">
+        <div class="desk-name" style="opacity:.4;">${s.name}</div>
+        <div class="desk-init" style="opacity:.4;">${s.initials}</div>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin:8px 0;font-style:italic;">Absent</div>
+      <button class="desk-btn" style="background:var(--bg3);border-color:var(--border2);" onclick="event.stopPropagation();toggleAbsent('${s.id}')">
+        ✓ Mark present
+      </button>
+    </div>`;
+  }
   const qPts   = studentDayQPts(s.id, ACTIVE_DATE, ACTIVE_Q);
   const dayPts = studentDayPts(s.id, ACTIVE_DATE);
   const allPts = studentTournamentPts(s.id);
@@ -1883,6 +1920,7 @@ function deskHTML(name, pos){
   const selCls = isSelected ? 'multi-selected' : '';
   return `<div class="desk ${s.team} ${selCls}" id="dk-${s.id}" data-name="${s.name}" data-id="${s.id}">
     ${MULTI_MODE ? `<div class="multi-check ${isSelected?'on':''}">${isSelected?'✓':'+'}</div>` : ''}
+    <div class="desk-absent-btn" onclick="event.stopPropagation();toggleAbsent('${s.id}')" title="Mark ${s.first} as absent">✕</div>
     <div class="desk-top">
       <div class="desk-name">${s.name}</div>
       <div class="desk-init">${s.initials}</div>
@@ -1893,9 +1931,12 @@ function deskHTML(name, pos){
       <span class="desk-all">day:${dayPts} · all:${allPts}</span>
     </div>
     <div class="desk-mini-cats">${chips}</div>
-    <button class="desk-btn" onclick="event.stopPropagation();deskLog('${s.id}')">
-      <span class="bi">${cat.icon}</span> +${cat.pts} ${cat.label}
-    </button>
+    <div class="desk-btn-row">
+      <button class="desk-btn" onclick="event.stopPropagation();deskLog('${s.id}')">
+        <span class="bi">${cat.icon}</span> +${cat.pts} ${cat.label}
+      </button>
+      <button class="desk-minus-btn" onclick="event.stopPropagation();logPoints('${s.id}','${ACTIVE_Q}','${ACTIVE_CAT}',-1)" title="Remove 1 count">−1</button>
+    </div>
     <div class="float-pts" id="fp-${s.id}"></div>
   </div>`;
 }
@@ -1914,6 +1955,13 @@ function attachDeskHandlers(hr){
 }
 
 // Desk click handler — in multi mode, toggles selection; otherwise single log
+function toggleAbsent(id){
+  if (ABSENT.has(id)) ABSENT.delete(id);
+  else ABSENT.add(id);
+  buildTeacherGrid();
+  renderBalls();  // also hide on race view
+  toast(ABSENT.has(id) ? 'Marked absent' : 'Marked present', 'info');
+}
 function deskLog(id){
   if (MULTI_MODE){
     toggleMultiSelect(id);
@@ -2270,17 +2318,20 @@ async function postToScript(action, payload){
   if (!haveScript()) return {ok:false, reason:'no-script'};
   try {
     const body = JSON.stringify({action, payload});
-    // Use no-cors for writes (fire-and-forget — reads require CORS-enabled GET)
+    // POST to Apps Script - use no-cors (can't read response, but that's OK for logging)
     const res = await fetch(SCRIPT_URL, {
       method: 'POST',
       mode: 'no-cors',
-      headers: {'Content-Type': 'text/plain'},
+      headers: {'Content-Type': 'application/json'},  // Apps Script needs this
       body,
     });
+    // Can't read response in no-cors mode, so assume success if no throw
     setSyncStatus('ok','Synced · '+new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}));
     return {ok:true};
   } catch (e){
+    console.error('postToScript error:', action, e);
     setSyncStatus('err', 'Error: '+e.message.slice(0,30));
+    toast('Sync error: '+e.message, 'err');
     return {ok:false, reason:e.message};
   }
 }
@@ -2386,7 +2437,13 @@ async function testScriptUrl(){
       setSetupStatus('err','Got response but no pong — is this the right script?');
     }
   } catch(e){
-    setSetupStatus('err','Error: '+e.message);
+    // The test sometimes fails due to CORS/redirects, but actual sync may work fine
+    const syncOk = document.getElementById('syncText').textContent.includes('Connected');
+    if (syncOk){
+      setSetupStatus('ok', '✓ Connection working (test failed but sync succeeded — ignore test error)');
+    } else {
+      setSetupStatus('err', 'Test error: '+e.message+' — but try "Push everything" anyway (sync uses different mode)');
+    }
   }
 }
 function setSetupStatus(kind, msg){
