@@ -1,731 +1,790 @@
-<!-- FULL COURT RACE TRACKER - Multi-User Edition
-  
-  SETUP INSTRUCTIONS:
-  1. Create new Google Sheet
-  2. Tools → Script Editor
-  3. Paste the Google Apps Script code from the Setup tab
-  4. Deploy as Web App (Execute as: Me, Access: Anyone)
-  5. Copy the deployment URL and paste it in Setup tab
-  6. Create these sheets: Students, Log, Points, Seating, Manual_Adjustments
-  
-  NEW FEATURES:
-  - 25 points max per category (was 1-3 points)
-  - +5 bonus button for extra credit
-  - Multi-user support (no conflicts)
-  - Roster view (sort by first/last name, homeroom, points)
-  - Add student feature
-  - Manual save button + auto-sync every 30s
-  - Better seating chart with auto-save
-  - All data stored in Google Sheets (no local storage)
--->
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>🏀 Full Court Race — Multi-User</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🏀 Full Court Race — G7 Championship</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Mono:wght@300;400;500;700&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+/* ═══ DESIGN TOKENS ═══ */
+:root{
+  --bg:#0a0d14; --bg2:#121620; --bg3:#181d2a; --bg4:#1f2537; --bg5:#2a3048;
+  --border:rgba(255,255,255,.06); --border2:rgba(255,255,255,.10); --border3:rgba(255,255,255,.20);
+  --text:#e2e6f2; --text2:#8591ab; --text3:#404a63;
+  --court:#d4752a; --court2:#ff9a4d;
+  --hardwood:#c48e5a; --hardwood2:#8a5d35; --hardwood3:#e0b880;
+  --line:#fff6e0;
+  --gold:#f0b429; --gold2:#ffd166;
+  --water:#4dd8ef;  --water2:#a0e8f7;  --waterbg:rgba(77,216,239,.1);
+  --fire:#ff7048;   --fire2:#ffa06d;   --firebg:rgba(255,112,72,.1);
+  --earth:#7cbd52;  --earth2:#a8da83;  --earthbg:rgba(124,189,82,.1);
+  --alert:#f04a5a; --alert2:#f88794;
+  --green:#2ecc8a; --green2:#5ee8ae;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{
+  font-family:'DM Sans',sans-serif;
+  background:radial-gradient(ellipse at top, rgba(212,117,42,.04), transparent 50%), var(--bg);
+  color:var(--text); min-height:100vh; font-size:13px;
+}
+
+/* NAV */
+.nav{
+  background:var(--bg2); border-bottom:1px solid var(--border);
+  height:52px; padding:0 16px; display:flex; align-items:center; gap:16px;
+  position:sticky; top:0; z-index:200;
+}
+.brand{font-family:'Syne',sans-serif; font-size:14px; font-weight:800; display:flex; align-items:center; gap:8px;}
+.tabs{display:flex; gap:0;}
+.ntab{
+  font-size:11px; font-weight:600; padding:0 14px; border:none;
+  background:transparent; color:var(--text2); cursor:pointer;
+  border-bottom:2px solid transparent; display:flex; align-items:center;
+  height:52px; transition:all .15s;
+}
+.ntab:hover{color:var(--text); background:var(--bg3);}
+.ntab.active{color:var(--gold2); border-bottom-color:var(--gold2); background:var(--bg3);}
+.nav-right{margin-left:auto; display:flex; gap:10px; align-items:center;}
+
+/* SAVE BUTTON */
+.save-btn{
+  background:var(--green); color:#0a0d14; border:none; padding:6px 14px;
+  border-radius:6px; font-weight:700; font-size:11px; cursor:pointer;
+  transition:all .2s; box-shadow:0 2px 8px rgba(46,204,138,.3);
+}
+.save-btn:hover{transform:translateY(-1px); box-shadow:0 4px 12px rgba(46,204,138,.5);}
+.save-btn.pending{background:var(--alert); animation:pulse 1.5s infinite;}
+.save-btn:disabled{opacity:.4; cursor:not-allowed;}
+
+/* SYNC STATUS */
+.sync-pill{
+  display:flex; align-items:center; gap:5px; font-size:10px; color:var(--text2);
+  padding:4px 9px; border-radius:5px; border:1px solid var(--border2);
+  background:var(--bg3); font-family:'DM Mono',monospace;
+}
+.sync-pill .dot{width:6px; height:6px; border-radius:50%; background:var(--text3);}
+.sync-pill.ok .dot{background:var(--green2); box-shadow:0 0 6px var(--green2);}
+.sync-pill.err .dot{background:var(--alert); animation:pulse 1.4s infinite;}
+.sync-pill.wait .dot{background:var(--gold2); animation:pulse 1s infinite;}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+
+/* PAGES */
+.page{display:none; padding:20px;}
+.page.active{display:block;}
+
+/* TEACHER GRID */
+.teacher-controls{
+  display:flex; gap:12px; align-items:center; margin-bottom:16px;
+  padding:12px 16px; background:var(--bg2); border-radius:8px;
+}
+.teacher-controls label{font-size:11px; color:var(--text2); font-weight:600; margin-right:6px;}
+.teacher-controls select{
+  background:var(--bg3); border:1px solid var(--border2); color:var(--text);
+  padding:6px 12px; border-radius:6px; font-size:11px;
+}
+
+.teacher-grid{
+  display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));
+  gap:12px;
+}
+.student-card{
+  background:var(--bg2); border:1px solid var(--border2); border-radius:10px;
+  padding:14px; position:relative; cursor:pointer; transition:all .2s;
+}
+.student-card:hover{border-color:var(--court); transform:translateY(-2px); box-shadow:0 6px 16px rgba(212,117,42,.2);}
+.student-card .name{font-size:14px; font-weight:700; margin-bottom:4px;}
+.student-card .homeroom{font-size:10px; color:var(--text2);}
+.student-card .points{
+  position:absolute; top:14px; right:14px;
+  font-family:'Syne',sans-serif; font-weight:800; font-size:20px;
+  color:var(--court2);
+}
+
+/* SEATING CHART */
+.seat-header{
+  display:flex; justify-content:space-between; align-items:center;
+  margin-bottom:16px; padding:12px 16px; background:var(--bg2); border-radius:8px;
+}
+.seat-header select{
+  background:var(--bg3); border:1px solid var(--border2); color:var(--text);
+  padding:6px 12px; border-radius:6px; font-size:11px;
+}
+.seat-grid{
+  display:grid; grid-template-columns:repeat(3, 1fr); gap:16px; margin-bottom:20px;
+}
+.seat-col{background:var(--bg2); border-radius:10px; padding:16px;}
+.seat-col-head{
+  font-size:11px; font-weight:700; color:var(--text2);
+  margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid var(--border);
+  display:flex; justify-content:space-between; align-items:center;
+}
+.seat-cluster{background:var(--bg3); border-radius:8px; padding:10px; margin-bottom:10px;}
+.seat-cluster-head{
+  font-size:10px; color:var(--text3); margin-bottom:8px;
+  display:flex; justify-content:space-between; align-items:center;
+}
+.seat-row{display:flex; gap:6px; margin-bottom:6px;}
+.seat-slot{
+  flex:1; min-height:50px; background:var(--bg4); border:1px dashed var(--border2);
+  border-radius:6px; display:flex; flex-direction:column; align-items:center;
+  justify-content:center; font-size:10px; color:var(--text3);
+  cursor:pointer; transition:all .2s;
+}
+.seat-slot.empty:hover{background:var(--bg5); border-color:var(--court);}
+.seat-slot.filled{
+  background:var(--court); border:1px solid var(--court2); color:#0a0d14;
+  font-weight:700; cursor:move;
+}
+.seat-slot.filled:hover{transform:translateY(-2px); box-shadow:0 4px 12px rgba(212,117,42,.4);}
+.seat-slot.drag-over{border-color:var(--gold2); background:var(--waterbg);}
+.seat-slot .initials{font-size:14px; font-weight:800; margin-bottom:2px;}
+
+/* NOT PLACED SECTION */
+.not-placed{
+  background:var(--bg2); border-radius:10px; padding:16px; margin-top:20px;
+}
+.not-placed-head{
+  font-size:12px; font-weight:700; margin-bottom:12px;
+  padding-bottom:8px; border-bottom:1px solid var(--border);
+}
+.not-placed-grid{
+  display:flex; flex-wrap:wrap; gap:8px; min-height:80px;
+  padding:12px; background:var(--bg3); border-radius:8px;
+  border:2px dashed var(--border2);
+}
+.not-placed-grid.drag-over{border-color:var(--gold2); background:var(--waterbg);}
+.student-chip{
+  background:var(--court); color:#0a0d14; padding:6px 12px;
+  border-radius:6px; font-size:11px; font-weight:700;
+  cursor:move; transition:all .2s; display:flex; align-items:center; gap:6px;
+}
+.student-chip:hover{transform:translateY(-1px); box-shadow:0 2px 8px rgba(212,117,42,.4);}
+.student-chip .init{font-size:13px;}
+
+/* MINI BUTTONS */
+.mini-btn{
+  background:var(--bg4); color:var(--text2); border:1px solid var(--border2);
+  padding:3px 8px; border-radius:4px; font-size:9px; font-weight:600;
+  cursor:pointer; transition:all .15s;
+}
+.mini-btn:hover{background:var(--bg5); color:var(--text); border-color:var(--border3);}
+
+/* MODAL */
+.modal{
+  position:fixed; top:0; left:0; right:0; bottom:0;
+  background:rgba(10,13,20,.95); display:none; align-items:center;
+  justify-content:center; z-index:1000;
+}
+.modal.open{display:flex;}
+.modal-content{
+  background:var(--bg2); border:2px solid var(--border3);
+  border-radius:12px; padding:24px; max-width:800px; width:90%;
+  max-height:90vh; overflow:auto;
+}
+.modal-header{display:flex; justify-content:space-between; margin-bottom:20px;}
+.modal-title{font-size:20px; font-weight:800;}
+.modal-close{
+  background:var(--bg3); color:var(--text); border:none;
+  width:32px; height:32px; border-radius:6px; cursor:pointer;
+  font-size:18px;
+}
+
+/* CATEGORY GRID */
+.cat-grid{display:grid; grid-template-columns:repeat(2, 1fr); gap:14px;}
+.cat-card{background:var(--bg3); border-radius:8px; padding:14px;}
+.cat-name{font-size:13px; font-weight:700; margin-bottom:8px;}
+.cat-progress{
+  background:var(--bg4); height:8px; border-radius:4px; overflow:hidden; margin-bottom:10px;
+}
+.cat-progress-bar{background:var(--court); height:100%; transition:width .3s;}
+.cat-score{font-size:18px; font-weight:800; color:var(--court2); margin-bottom:8px;}
+.cat-buttons{display:flex; gap:6px;}
+.cat-btn{
+  flex:1; background:var(--green); color:#0a0d14; border:none;
+  padding:6px 10px; border-radius:4px; font-weight:700; font-size:11px;
+  cursor:pointer; transition:all .2s;
+}
+.cat-btn:hover{transform:translateY(-1px); box-shadow:0 2px 8px rgba(46,204,138,.3);}
+.cat-btn.bonus{background:var(--gold);}
+.cat-btn:disabled{opacity:.3; cursor:not-allowed;}
+
+/* QUARTER TABS */
+.quarter-tabs{display:flex; gap:8px; margin-bottom:20px;}
+.quarter-tab{
+  background:var(--bg3); color:var(--text2); border:none;
+  padding:8px 16px; border-radius:6px; font-weight:700; cursor:pointer;
+}
+.quarter-tab.active{background:var(--court); color:#0a0d14;}
+</style>
 </head>
+
 <body>
-<div id="root"></div>
+<!-- NAV -->
+<div class="nav">
+  <div class="brand">🏀 FULL COURT RACE</div>
+  <div class="tabs">
+    <button class="ntab active" onclick="switchTab('teacher')">🎯 Teacher</button>
+    <button class="ntab" onclick="switchTab('seating')">🪑 Seating</button>
+    <button class="ntab" onclick="switchTab('roster')">📋 Roster</button>
+    <button class="ntab" onclick="switchTab('setup')">⚙️ Setup</button>
+  </div>
+  <div class="nav-right">
+    <button class="save-btn" id="saveBtn" onclick="manualSave()">💾 Saved</button>
+    <div class="sync-pill" id="syncPill">
+      <div class="dot"></div>
+      <span id="syncText">Offline</span>
+    </div>
+  </div>
+</div>
 
-<script type="text/babel">
-const { useState, useEffect, useCallback } = React;
+<!-- TEACHER INPUT PAGE -->
+<div id="page-teacher" class="page active">
+  <div class="teacher-controls">
+    <div>
+      <label>Sort by:</label>
+      <select id="teacherSort" onchange="buildTeacherGrid()">
+        <option value="first">First Name</option>
+        <option value="last">Last Name</option>
+        <option value="homeroom">Homeroom</option>
+        <option value="points">Total Points</option>
+      </select>
+    </div>
+    <div>
+      <label>Homeroom:</label>
+      <select id="teacherHomeroom" onchange="buildTeacherGrid()">
+        <option value="all">All Homerooms</option>
+        <option value="Columbia">Columbia</option>
+        <option value="Emory">Emory</option>
+        <option value="Vanderbilt">Vanderbilt</option>
+      </select>
+    </div>
+    <div style="margin-left:auto; font-size:11px; color:var(--text2);">
+      Click student to add points
+    </div>
+  </div>
+  <div class="teacher-grid" id="teacherGrid"></div>
+</div>
 
-// Configuration
-const SCRIPT_URL_KEY = 'fcr_script_v2';
-const MAX_POINTS_PER_CATEGORY = 25;
+<!-- SEATING CHART PAGE -->
+<div id="page-seating" class="page">
+  <div class="seat-header">
+    <div>
+      <label style="font-size:12px; font-weight:700; margin-right:8px;">Homeroom:</label>
+      <select id="seatHomeroom" onchange="buildSeatEditor()">
+        <option value="Columbia">Columbia</option>
+        <option value="Emory">Emory</option>
+        <option value="Vanderbilt">Vanderbilt</option>
+      </select>
+    </div>
+    <div style="display:flex; gap:8px;">
+      <button class="mini-btn" onclick="clearSeating()">Clear All</button>
+      <button class="mini-btn" onclick="defaultSeatLayout()">Reset to Default</button>
+    </div>
+  </div>
+  <div class="seat-grid" id="seatGrid"></div>
+  
+  <!-- NOT PLACED SECTION -->
+  <div class="not-placed">
+    <div class="not-placed-head">
+      ⚠️ Not Placed (<span id="notPlacedCount">0</span> students)
+      <span style="float:right; font-size:10px; color:var(--text3);">Drag students here to unassign</span>
+    </div>
+    <div 
+      class="not-placed-grid" 
+      id="notPlacedGrid"
+      ondragover="event.preventDefault(); this.classList.add('drag-over');"
+      ondragleave="this.classList.remove('drag-over');"
+      ondrop="dropToNotPlaced(event)"
+    ></div>
+  </div>
+</div>
+
+<!-- ROSTER PAGE -->
+<div id="page-roster" class="page">
+  <h2>Roster View (Coming Soon)</h2>
+</div>
+
+<!-- SETUP PAGE -->
+<div id="page-setup" class="page">
+  <h2 style="margin-bottom:20px;">⚙️ Setup</h2>
+  <div style="background:var(--bg2); border-radius:10px; padding:20px; margin-bottom:20px;">
+    <div style="font-size:14px; font-weight:700; margin-bottom:12px;">✅ Google Sheets Connected</div>
+    <div style="background:var(--bg3); padding:12px; border-radius:6px; font-size:11px; font-family:monospace; color:var(--green2); word-break:break-all;">
+      https://script.google.com/macros/s/AKfycbzmuIm7-EaGIJCchArL5wwZ7j0g7447X0La7-7xrg4C8kH3PXlbWe4ZX8hyllwQQdrz/exec
+    </div>
+  </div>
+</div>
+
+<!-- STUDENT MODAL -->
+<div class="modal" id="studentModal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <div class="modal-title" id="modalStudentName"></div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="quarter-tabs" id="modalQuarterTabs"></div>
+    <div class="cat-grid" id="modalCatGrid"></div>
+  </div>
+</div>
+
+<script>
+// ═══ CONFIGURATION ═══
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzmuIm7-EaGIJCchArL5wwZ7j0g7447X0La7-7xrg4C8kH3PXlbWe4ZX8hyllwQQdrz/exec';
+const MAX_POINTS = 25;
 const BONUS_POINTS = 5;
 
 const CATEGORIES = [
-  {id: 'focus', name: 'Focus', icon: '🎯'},
-  {id: 'effort', name: 'Effort', icon: '💪'},
-  {id: 'show_work', name: 'Show All Work', icon: '📝'},
-  {id: 'accuracy', name: 'Accuracy', icon: '✓'},
-  {id: 'word_problems', name: 'Word Problems', icon: '📖'},
-  {id: 'pacing', name: 'Strong Pacing', icon: '⚡'},
-  {id: 'participation', name: 'Participation', icon: '🙋'},
-  {id: 'leadership', name: 'Leadership', icon: '👑'},
-  {id: 'habits', name: 'Habits', icon: '⭐'},
-  {id: 'mastery', name: 'Mastery', icon: '🏆'}
+  {id:'focus', name:'Focus', icon:'🎯'},
+  {id:'effort', name:'Effort', icon:'💪'},
+  {id:'show_work', name:'Show All Work', icon:'📝'},
+  {id:'accuracy', name:'Accuracy', icon:'✓'},
+  {id:'word_problems', name:'Word Problems', icon:'📖'},
+  {id:'pacing', name:'Strong Pacing', icon:'⚡'},
+  {id:'participation', name:'Participation', icon:'🙋'},
+  {id:'leadership', name:'Leadership', icon:'👑'},
+  {id:'habits', name:'Habits', icon:'⭐'},
+  {id:'mastery', name:'Mastery', icon:'🏆'}
 ];
 
-const HOMEROOMS = [
-  {id: 'Columbia', name: 'Columbia', color: '#4dd8ef', icon: '💧'},
-  {id: 'Emory', name: 'Emory', color: '#ff7048', icon: '🔥'},
-  {id: 'Vanderbilt', name: 'Vanderbilt', color: '#7cbd52', icon: '🌿'}
-];
-
+const HOMEROOMS = ['Columbia', 'Emory', 'Vanderbilt'];
 const QUARTERS = ['Q1', 'Q2', 'Q3', 'Q4'];
 
-function App() {
-  const [scriptUrl, setScriptUrl] = useState(localStorage.getItem(SCRIPT_URL_KEY) || '');
-  const [students, setStudents] = useState({});
-  const [points, setPoints] = useState({});
-  const [seating, setSeating] = useState({Columbia:[], Emory:[], Vanderbilt:[]});
-  const [pendingSaves, setPendingSaves] = useState([]);
-  const [syncStatus, setSyncStatus] = useState('offline');
-  const [currentView, setCurrentView] = useState('scoreboard');
-  const [rosterSort, setRosterSort] = useState('first');
-  const [rosterHomeroom, setRosterHomeroom] = useState('all');
-  
-  // Google Sheets integration
-  const callSheet = useCallback(async (action, data = {}) => {
-    if (!scriptUrl) return null;
-    
-    try {
-      setSyncStatus('syncing');
-      const response = await fetch(scriptUrl + '?action=' + action, {
-        method: 'POST',
-        body: JSON.stringify(data)
-      });
-      
-      const result = await response.json();
-      setSyncStatus('ok');
-      return result;
-    } catch (error) {
-      console.error('Sheet error:', error);
-      setSyncStatus('error');
-      return null;
-    }
-  }, [scriptUrl]);
-  
-  // Load data from sheet
-  const loadData = useCallback(async () => {
-    const result = await callSheet('getState');
-    if (!result) return;
-    
-    if (result.students) {
-      const studentsMap = {};
-      result.students.forEach(s => {
-        const [first, ...lastParts] = s.name.split(' ');
-        studentsMap[s.id] = {
-          ...s,
-          firstName: first,
-          lastName: lastParts.join(' ')
-        };
-      });
-      setStudents(studentsMap);
-    }
-    
-    if (result.points) setPoints(result.points);
-    if (result.seating) setSeating(result.seating);
-  }, [callSheet]);
-  
-  // Add points
-  const addPoints = useCallback((studentId, quarter, category, amount) => {
-    const student = students[studentId];
-    if (!student) return;
-    
-    // Add to pending queue
-    setPendingSaves(prev => [...prev, {
-      timestamp: new Date().toISOString(),
-      studentId,
-      studentName: student.name,
-      homeroom: student.homeroom,
-      quarter,
-      category,
-      points: amount
-    }]);
-    
-    // Update local state optimistically
-    setPoints(prev => {
-      const newPoints = {...prev};
-      if (!newPoints[studentId]) {
-        newPoints[studentId] = {};
-        QUARTERS.forEach(q => {
-          newPoints[studentId][q] = {};
-          CATEGORIES.forEach(c => newPoints[studentId][q][c.id] = 0);
-        });
-      }
-      
-      const current = newPoints[studentId][quarter][category] || 0;
-      newPoints[studentId][quarter][category] = Math.min(MAX_POINTS_PER_CATEGORY, current + amount);
-      
-      return newPoints;
+// ═══ STATE ═══
+let STUDENTS = {};  // id -> {name, firstName, lastName, homeroom}
+let POINTS = {};     // id -> {Q1:{focus:15,...}, Q2:...}
+let SEATING = {Columbia:[], Emory:[], Vanderbilt:[]};
+let PENDING_SAVES = [];
+let CURRENT_STUDENT = null;
+let CURRENT_QUARTER = 'Q1';
+let DRAG_STUDENT = null;
+
+// ═══ GOOGLE SHEETS ═══
+async function callSheet(action, data = {}) {
+  try {
+    setSyncStatus('wait', 'Syncing...');
+    const response = await fetch(SCRIPT_URL + '?action=' + action, {
+      method: 'POST',
+      body: JSON.stringify(data),
+      headers: {'Content-Type': 'application/json'}
     });
-  }, [students]);
-  
-  // Manual save
-  const manualSave = useCallback(async () => {
-    if (pendingSaves.length === 0) return;
     
-    const result = await callSheet('batchAddPoints', {entries: pendingSaves});
-    if (result && result.success) {
-      setPendingSaves([]);
-    }
-  }, [pendingSaves, callSheet]);
-  
-  // Add student
-  const addStudent = useCallback(async (name, homeroom) => {
-    const result = await callSheet('addStudent', {name, homeroom});
-    if (result && result.success) {
-      await loadData();
-    }
-  }, [callSheet, loadData]);
-  
-  // Auto-save every 30 seconds
-  useEffect(() => {
-    if (pendingSaves.length === 0) return;
-    
-    const timer = setTimeout(manualSave, 30000);
-    return () => clearTimeout(timer);
-  }, [pendingSaves, manualSave]);
-  
-  // Auto-load every 10 seconds
-  useEffect(() => {
-    if (!scriptUrl) return;
-    
-    loadData();
-    const interval = setInterval(loadData, 10000);
-    return () => clearInterval(interval);
-  }, [scriptUrl, loadData]);
-  
-  // Save script URL
-  useEffect(() => {
-    if (scriptUrl) {
-      localStorage.setItem(SCRIPT_URL_KEY, scriptUrl);
-    }
-  }, [scriptUrl]);
-  
-  // Render different views
-  const renderView = () => {
-    switch(currentView) {
-      case 'scoreboard': return <ScoreboardView students={students} points={points} />;
-      case 'roster': return <RosterView students={students} points={points} rosterSort={rosterSort} setRosterSort={setRosterSort} rosterHomeroom={rosterHomeroom} setRosterHomeroom={setRosterHomeroom} onAddPoints={addPoints} />;
-      case 'seating': return <SeatingView students={students} seating={seating} setSeating={setSeating} callSheet={callSheet} />;
-      case 'setup': return <SetupView scriptUrl={scriptUrl} setScriptUrl={setScriptUrl} />;
-      default: return null;
-    }
-  };
-  
-  return (
-    <div style={{minHeight:'100vh',background:'#0a0d14',color:'#e2e6f2',fontFamily:'system-ui'}}>
-      {/* Nav */}
-      <div style={{background:'#121620',borderBottom:'1px solid rgba(255,255,255,.06)',padding:'12px 20px',display:'flex',alignItems:'center',gap:'20px'}}>
-        <div style={{fontSize:'16px',fontWeight:'800'}}>🏀 FULL COURT RACE</div>
-        
-        <div style={{display:'flex',gap:'8px'}}>
-          {['scoreboard', 'roster', 'seating', 'setup'].map(tab => (
-            <button
-              key={tab}
-              onClick={() => setCurrentView(tab)}
-              style={{
-                background: currentView === tab ? '#d4752a' : 'transparent',
-                color: currentView === tab ? '#0a0d14' : '#8591ab',
-                border: 'none',
-                padding: '8px 16px',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                fontWeight: '600',
-                fontSize: '12px',
-                textTransform: 'capitalize'
-              }}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
-        
-        <div style={{marginLeft:'auto',display:'flex',gap:'12px',alignItems:'center'}}>
-          <button
-            onClick={manualSave}
-            disabled={pendingSaves.length === 0}
-            style={{
-              background: pendingSaves.length > 0 ? '#f04a5a' : '#2ecc8a',
-              color: '#0a0d14',
-              border: 'none',
-              padding: '8px 16px',
-              borderRadius: '6px',
-              fontWeight: '700',
-              fontSize: '12px',
-              cursor: pendingSaves.length > 0 ? 'pointer' : 'not-allowed',
-              opacity: pendingSaves.length > 0 ? 1 : 0.5
-            }}
-          >
-            💾 {pendingSaves.length > 0 ? `Save (${pendingSaves.length})` : 'Saved'}
-          </button>
-          
-          <div style={{fontSize:'11px',color:'#8591ab',display:'flex',alignItems:'center',gap:'6px'}}>
-            <div style={{
-              width:'8px',
-              height:'8px',
-              borderRadius:'50%',
-              background: syncStatus === 'ok' ? '#2ecc8a' : syncStatus === 'syncing' ? '#ffd166' : '#404a63'
-            }}/>
-            {syncStatus === 'ok' ? 'Synced' : syncStatus === 'syncing' ? 'Syncing...' : 'Offline'}
-          </div>
-        </div>
-      </div>
-      
-      {/* Content */}
-      <div style={{padding:'20px'}}>
-        {renderView()}
-      </div>
-    </div>
-  );
+    const result = await response.json();
+    setSyncStatus('ok', 'Synced');
+    return result;
+  } catch (error) {
+    console.error('Sheet error:', error);
+    setSyncStatus('err', 'Sync failed');
+    return null;
+  }
 }
 
-// Scoreboard View
-function ScoreboardView({students, points}) {
-  const homerooms = HOMEROOMS.map(hr => {
-    const hrStudents = Object.values(students).filter(s => s.homeroom === hr.id);
-    const total = hrStudents.reduce((sum, s) => {
-      const studentPoints = points[s.id] || {};
-      return sum + QUARTERS.reduce((qSum, q) => {
-        const qData = studentPoints[q] || {};
-        return qSum + Object.values(qData).reduce((cSum, v) => cSum + (Number(v) || 0), 0);
-      }, 0);
-    }, 0);
-    
-    return {...hr, total, studentCount: hrStudents.length};
-  }).sort((a,b) => b.total - a.total);
+async function loadData() {
+  const result = await callSheet('getState');
+  if (!result) return;
   
-  return (
-    <div style={{maxWidth:'1200px',margin:'0 auto'}}>
-      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'16px'}}>
-        {homerooms.map((hr, idx) => (
-          <div
-            key={hr.id}
-            style={{
-              background:'#121620',
-              border:`2px solid ${idx === 0 ? hr.color : 'rgba(255,255,255,.06)'}`,
-              borderRadius:'12px',
-              padding:'24px',
-              position:'relative',
-              boxShadow: idx === 0 ? `0 8px 24px ${hr.color}33` : 'none'
-            }}
-          >
-            {idx === 0 && (
-              <div style={{position:'absolute',top:'8px',right:'12px',fontSize:'10px',fontWeight:'800',color:'#f0b429'}}>
-                🏆 LEADING
-              </div>
-            )}
-            
-            <div style={{fontSize:'48px',marginBottom:'8px'}}>{hr.icon}</div>
-            <div style={{fontSize:'20px',fontWeight:'800',color:hr.color,marginBottom:'4px'}}>{hr.name}</div>
-            <div style={{fontSize:'12px',color:'#8591ab',marginBottom:'16px'}}>{hr.studentCount} students</div>
-            <div style={{fontSize:'48px',fontWeight:'800',color:'#e2e6f2'}}>{hr.total}</div>
-            <div style={{fontSize:'11px',color:'#8591ab',marginTop:'4px'}}>total points</div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// Roster View
-function RosterView({students, points, rosterSort, setRosterSort, rosterHomeroom, setRosterHomeroom, onAddPoints}) {
-  const [selectedStudent, setSelectedStudent] = useState(null);
-  const [selectedQuarter, setSelectedQuarter] = useState('Q1');
-  
-  let studentList = Object.values(students);
-  
-  // Filter
-  if (rosterHomeroom !== 'all') {
-    studentList = studentList.filter(s => s.homeroom === rosterHomeroom);
+  if (result.students) {
+    STUDENTS = {};
+    result.students.forEach(s => {
+      const [first, ...lastParts] = s.name.split(' ');
+      STUDENTS[s.id] = {
+        ...s,
+        firstName: first,
+        lastName: lastParts.join(' ')
+      };
+    });
   }
   
-  // Sort
-  studentList.sort((a,b) => {
-    if (rosterSort === 'first') return a.firstName.localeCompare(b.firstName);
-    if (rosterSort === 'last') return a.lastName.localeCompare(b.lastName);
-    if (rosterSort === 'homeroom') return a.homeroom.localeCompare(b.homeroom);
-    if (rosterSort === 'points') {
-      const ptsA = getStudentTotal(a.id, points);
-      const ptsB = getStudentTotal(b.id, points);
-      return ptsB - ptsA;
-    }
+  if (result.points) POINTS = result.points;
+  if (result.seating) SEATING = result.seating;
+  
+  buildTeacherGrid();
+  buildSeatEditor();
+}
+
+async function addPoints(studentId, quarter, category, amount) {
+  const student = STUDENTS[studentId];
+  if (!student) return;
+  
+  PENDING_SAVES.push({
+    timestamp: new Date().toISOString(),
+    studentId,
+    studentName: student.name,
+    homeroom: student.homeroom,
+    quarter,
+    category,
+    points: amount
+  });
+  
+  // Update local state
+  if (!POINTS[studentId]) {
+    POINTS[studentId] = {};
+    QUARTERS.forEach(q => {
+      POINTS[studentId][q] = {};
+      CATEGORIES.forEach(c => POINTS[studentId][q][c.id] = 0);
+    });
+  }
+  
+  const current = POINTS[studentId][quarter][category] || 0;
+  POINTS[studentId][quarter][category] = Math.min(MAX_POINTS, current + amount);
+  
+  updateSaveButton();
+  if (CURRENT_STUDENT === studentId) openStudentModal(studentId);
+}
+
+async function manualSave() {
+  if (PENDING_SAVES.length === 0) return;
+  
+  const btn = document.getElementById('saveBtn');
+  btn.disabled = true;
+  
+  const result = await callSheet('batchAddPoints', {entries: PENDING_SAVES});
+  
+  if (result && result.success) {
+    PENDING_SAVES = [];
+    updateSaveButton();
+  }
+  
+  btn.disabled = false;
+}
+
+async function saveSeating() {
+  const hr = document.getElementById('seatHomeroom').value;
+  await callSheet('updateSeating', {homeroom: hr, layout: SEATING[hr]});
+}
+
+// ═══ TEACHER GRID ═══
+function buildTeacherGrid() {
+  const sort = document.getElementById('teacherSort').value;
+  const hrFilter = document.getElementById('teacherHomeroom').value;
+  
+  let students = Object.values(STUDENTS);
+  
+  if (hrFilter !== 'all') {
+    students = students.filter(s => s.homeroom === hrFilter);
+  }
+  
+  students.sort((a,b) => {
+    if (sort === 'first') return a.firstName.localeCompare(b.firstName);
+    if (sort === 'last') return a.lastName.localeCompare(b.lastName);
+    if (sort === 'homeroom') return a.homeroom.localeCompare(b.homeroom);
+    if (sort === 'points') return getTotalPoints(b.id) - getTotalPoints(a.id);
     return 0;
   });
   
-  const renderStudentPanel = () => {
-    if (!selectedStudent) return null;
-    
-    const student = students[selectedStudent];
-    const studentPoints = points[selectedStudent] || {};
-    const quarterData = studentPoints[selectedQuarter] || {};
-    
-    return (
-      <div style={{
-        position:'fixed',
-        top:0,left:0,right:0,bottom:0,
-        background:'rgba(10,13,20,.95)',
-        display:'flex',
-        alignItems:'center',
-        justifyContent:'center',
-        zIndex:1000
-      }}>
-        <div style={{
-          background:'#121620',
-          border:'2px solid rgba(255,255,255,.1)',
-          borderRadius:'16px',
-          padding:'32px',
-          maxWidth:'800px',
-          width:'90%',
-          maxHeight:'80vh',
-          overflow:'auto'
-        }}>
-          <div style={{display:'flex',justifyContent:'space-between',marginBottom:'24px'}}>
-            <div>
-              <div style={{fontSize:'24px',fontWeight:'800',marginBottom:'4px'}}>{student.name}</div>
-              <div style={{fontSize:'14px',color:'#8591ab'}}>{student.homeroom}</div>
-            </div>
-            <button onClick={() => setSelectedStudent(null)} style={{background:'#1f2537',color:'#e2e6f2',border:'none',padding:'8px 16px',borderRadius:'6px',cursor:'pointer'}}>✕ Close</button>
-          </div>
-          
-          {/* Quarter selector */}
-          <div style={{display:'flex',gap:'8px',marginBottom:'24px'}}>
-            {QUARTERS.map(q => (
-              <button
-                key={q}
-                onClick={() => setSelectedQuarter(q)}
-                style={{
-                  background: selectedQuarter === q ? '#d4752a' : '#1f2537',
-                  color: selectedQuarter === q ? '#0a0d14' : '#e2e6f2',
-                  border:'none',
-                  padding:'8px 16px',
-                  borderRadius:'6px',
-                  cursor:'pointer',
-                  fontWeight:'700'
-                }}
-              >
-                {q}
-              </button>
-            ))}
-          </div>
-          
-          {/* Categories */}
-          <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:'16px'}}>
-            {CATEGORIES.map(cat => {
-              const current = quarterData[cat.id] || 0;
-              const percentage = (current / MAX_POINTS_PER_CATEGORY) * 100;
-              
-              return (
-                <div key={cat.id} style={{background:'#1f2537',borderRadius:'8px',padding:'16px'}}>
-                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'12px'}}>
-                    <div>
-                      <div style={{fontSize:'14px',fontWeight:'700'}}>{cat.icon} {cat.name}</div>
-                      <div style={{fontSize:'20px',fontWeight:'800',color:'#d4752a',marginTop:'4px'}}>
-                        {current}/{MAX_POINTS_PER_CATEGORY}
-                      </div>
-                    </div>
-                  </div>
-                  
-                  {/* Progress bar */}
-                  <div style={{background:'#0a0d14',borderRadius:'4px',height:'8px',overflow:'hidden',marginBottom:'12px'}}>
-                    <div style={{background:'#d4752a',height:'100%',width:`${percentage}%`,transition:'width .3s'}}/>
-                  </div>
-                  
-                  {/* Add buttons */}
-                  <div style={{display:'flex',gap:'8px'}}>
-                    <button
-                      onClick={() => onAddPoints(selectedStudent, selectedQuarter, cat.id, 5)}
-                      disabled={current >= MAX_POINTS_PER_CATEGORY}
-                      style={{
-                        flex:1,
-                        background: current >= MAX_POINTS_PER_CATEGORY ? '#404a63' : '#2ecc8a',
-                        color: current >= MAX_POINTS_PER_CATEGORY ? '#8591ab' : '#0a0d14',
-                        border:'none',
-                        padding:'6px 12px',
-                        borderRadius:'4px',
-                        cursor: current >= MAX_POINTS_PER_CATEGORY ? 'not-allowed' : 'pointer',
-                        fontWeight:'700',
-                        fontSize:'11px'
-                      }}
-                    >
-                      +5
-                    </button>
-                    <button
-                      onClick={() => onAddPoints(selectedStudent, selectedQuarter, cat.id, BONUS_POINTS)}
-                      style={{
-                        background:'#f0b429',
-                        color:'#0a0d14',
-                        border:'none',
-                        padding:'6px 12px',
-                        borderRadius:'4px',
-                        cursor:'pointer',
-                        fontWeight:'700',
-                        fontSize:'11px'
-                      }}
-                    >
-                      ⭐ Bonus +{BONUS_POINTS}
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-    );
-  };
-  
-  return (
-    <>
-      <div style={{maxWidth:'1400px',margin:'0 auto'}}>
-        <div style={{display:'flex',gap:'16px',marginBottom:'20px',alignItems:'center'}}>
-          <div>
-            <label style={{fontSize:'11px',color:'#8591ab',marginBottom:'4px',display:'block'}}>Sort by</label>
-            <select value={rosterSort} onChange={e => setRosterSort(e.target.value)} style={{background:'#1f2537',color:'#e2e6f2',border:'1px solid rgba(255,255,255,.1)',padding:'8px 12px',borderRadius:'6px',fontSize:'12px'}}>
-              <option value="first">First Name</option>
-              <option value="last">Last Name</option>
-              <option value="homeroom">Homeroom</option>
-              <option value="points">Total Points</option>
-            </select>
-          </div>
-          
-          <div>
-            <label style={{fontSize:'11px',color:'#8591ab',marginBottom:'4px',display:'block'}}>Homeroom</label>
-            <select value={rosterHomeroom} onChange={e => setRosterHomeroom(e.target.value)} style={{background:'#1f2537',color:'#e2e6f2',border:'1px solid rgba(255,255,255,.1)',padding:'8px 12px',borderRadius:'6px',fontSize:'12px'}}>
-              <option value="all">All Homerooms</option>
-              {HOMEROOMS.map(hr => <option key={hr.id} value={hr.id}>{hr.name}</option>)}
-            </select>
-          </div>
-        </div>
-        
-        <div style={{background:'#121620',borderRadius:'12px',overflow:'hidden'}}>
-          <table style={{width:'100%',borderCollapse:'collapse'}}>
-            <thead>
-              <tr style={{background:'#1f2537'}}>
-                <th style={{padding:'12px 16px',textAlign:'left',fontSize:'11px',fontWeight:'700',color:'#8591ab'}}>Name</th>
-                <th style={{padding:'12px 16px',textAlign:'left',fontSize:'11px',fontWeight:'700',color:'#8591ab'}}>Homeroom</th>
-                {QUARTERS.map(q => <th key={q} style={{padding:'12px 16px',textAlign:'center',fontSize:'11px',fontWeight:'700',color:'#8591ab'}}>{q}</th>)}
-                <th style={{padding:'12px 16px',textAlign:'center',fontSize:'11px',fontWeight:'700',color:'#8591ab'}}>Total</th>
-                <th style={{padding:'12px 16px',textAlign:'center',fontSize:'11px',fontWeight:'700',color:'#8591ab'}}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {studentList.map(s => {
-                const studentPoints = points[s.id] || {};
-                const quarterTotals = QUARTERS.map(q => {
-                  const qData = studentPoints[q] || {};
-                  return Object.values(qData).reduce((sum,v) => sum + (Number(v)||0), 0);
-                });
-                const total = quarterTotals.reduce((sum,v) => sum + v, 0);
-                
-                return (
-                  <tr key={s.id} style={{borderBottom:'1px solid rgba(255,255,255,.06)'}}>
-                    <td style={{padding:'12px 16px',fontSize:'13px',fontWeight:'600'}}>{s.name}</td>
-                    <td style={{padding:'12px 16px',fontSize:'12px',color:'#8591ab'}}>{s.homeroom}</td>
-                    {quarterTotals.map((qt,i) => <td key={i} style={{padding:'12px 16px',textAlign:'center',fontSize:'13px'}}>{qt}</td>)}
-                    <td style={{padding:'12px 16px',textAlign:'center',fontSize:'14px',fontWeight:'800',color:'#d4752a'}}>{total}</td>
-                    <td style={{padding:'12px 16px',textAlign:'center'}}>
-                      <button onClick={() => setSelectedStudent(s.id)} style={{background:'#d4752a',color:'#0a0d14',border:'none',padding:'6px 14px',borderRadius:'4px',cursor:'pointer',fontSize:'11px',fontWeight:'700'}}>
-                        Add Points
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-      
-      {renderStudentPanel()}
-    </>
-  );
-}
-
-// Seating View (simplified)
-function SeatingView({students, seating, setSeating, callSheet}) {
-  return (
-    <div style={{maxWidth:'1200px',margin:'0 auto',textAlign:'center',padding:'40px'}}>
-      <div style={{fontSize:'20px',fontWeight:'800',marginBottom:'16px'}}>🪑 Seating Chart</div>
-      <div style={{fontSize:'14px',color:'#8591ab'}}>Seating chart editor coming soon!</div>
+  const grid = document.getElementById('teacherGrid');
+  grid.innerHTML = students.map(s => `
+    <div class="student-card" onclick="openStudentModal('${s.id}')">
+      <div class="name">${s.name}</div>
+      <div class="homeroom">${s.homeroom}</div>
+      <div class="points">${getTotalPoints(s.id)}</div>
     </div>
-  );
+  `).join('');
 }
 
-// Setup View
-function SetupView({scriptUrl, setScriptUrl}) {
-  return (
-    <div style={{maxWidth:'800px',margin:'0 auto'}}>
-      <div style={{fontSize:'24px',fontWeight:'800',marginBottom:'24px'}}>⚙️ Setup</div>
-      
-      <div style={{background:'#121620',borderRadius:'12px',padding:'24px',marginBottom:'24px'}}>
-        <div style={{fontSize:'16px',fontWeight:'700',marginBottom:'12px'}}>Google Sheets URL</div>
-        <input
-          type="text"
-          value={scriptUrl}
-          onChange={e => setScriptUrl(e.target.value)}
-          placeholder="Paste your Google Apps Script web app URL here..."
-          style={{
-            width:'100%',
-            background:'#1f2537',
-            color:'#e2e6f2',
-            border:'1px solid rgba(255,255,255,.1)',
-            padding:'12px',
-            borderRadius:'6px',
-            fontSize:'13px',
-            marginBottom:'12px'
-          }}
-        />
-        <div style={{fontSize:'12px',color:'#8591ab'}}>
-          Deploy your Google Apps Script as a web app and paste the URL above
+function getTotalPoints(studentId) {
+  const pts = POINTS[studentId] || {};
+  let total = 0;
+  QUARTERS.forEach(q => {
+    const qData = pts[q] || {};
+    CATEGORIES.forEach(c => {
+      total += qData[c.id] || 0;
+    });
+  });
+  return total;
+}
+
+// ═══ STUDENT MODAL ═══
+function openStudentModal(studentId) {
+  CURRENT_STUDENT = studentId;
+  const student = STUDENTS[studentId];
+  
+  document.getElementById('modalStudentName').textContent = student.name;
+  document.getElementById('studentModal').classList.add('open');
+  
+  // Quarter tabs
+  document.getElementById('modalQuarterTabs').innerHTML = QUARTERS.map(q => `
+    <button class="quarter-tab ${q === CURRENT_QUARTER ? 'active' : ''}" onclick="switchQuarter('${q}')">
+      ${q}
+    </button>
+  `).join('');
+  
+  renderCategories();
+}
+
+function closeModal() {
+  document.getElementById('studentModal').classList.remove('open');
+  CURRENT_STUDENT = null;
+}
+
+function switchQuarter(q) {
+  CURRENT_QUARTER = q;
+  if (CURRENT_STUDENT) openStudentModal(CURRENT_STUDENT);
+}
+
+function renderCategories() {
+  const studentPoints = POINTS[CURRENT_STUDENT] || {};
+  const quarterData = studentPoints[CURRENT_QUARTER] || {};
+  
+  document.getElementById('modalCatGrid').innerHTML = CATEGORIES.map(cat => {
+    const current = quarterData[cat.id] || 0;
+    const percentage = (current / MAX_POINTS) * 100;
+    const canAdd = current < MAX_POINTS;
+    
+    return `
+      <div class="cat-card">
+        <div class="cat-name">${cat.icon} ${cat.name}</div>
+        <div class="cat-score">${current}/${MAX_POINTS}</div>
+        <div class="cat-progress">
+          <div class="cat-progress-bar" style="width:${percentage}%"></div>
+        </div>
+        <div class="cat-buttons">
+          <button class="cat-btn" onclick="addPoints('${CURRENT_STUDENT}','${CURRENT_QUARTER}','${cat.id}',5)" ${!canAdd ? 'disabled' : ''}>
+            +5
+          </button>
+          <button class="cat-btn bonus" onclick="addPoints('${CURRENT_STUDENT}','${CURRENT_QUARTER}','${cat.id}',${BONUS_POINTS})">
+            ⭐ +${BONUS_POINTS}
+          </button>
         </div>
       </div>
-      
-      <div style={{background:'#121620',borderRadius:'12px',padding:'24px'}}>
-        <div style={{fontSize:'16px',fontWeight:'700',marginBottom:'12px'}}>Google Apps Script Code</div>
-        <div style={{fontSize:'12px',color:'#8591ab',marginBottom:'12px'}}>
-          Copy this code into your Google Apps Script editor (Tools → Script Editor)
+    `;
+  }).join('');
+}
+
+// ═══ SEATING CHART ═══
+function buildSeatEditor() {
+  const hr = document.getElementById('seatHomeroom').value;
+  const layout = SEATING[hr] || getDefaultLayout();
+  SEATING[hr] = layout;
+  
+  // Build 3-column grid
+  const grid = document.getElementById('seatGrid');
+  grid.innerHTML = ['LEFT', 'CENTER', 'RIGHT'].map((colName, ci) => {
+    const col = layout[ci] || {clusters:[]};
+    return `
+      <div class="seat-col">
+        <div class="seat-col-head">
+          <span>${colName}</span>
+          <button class="mini-btn" onclick="addCluster(${ci})">+ Cluster</button>
         </div>
-        <pre style={{background:'#0a0d14',color:'#2ecc8a',padding:'16px',borderRadius:'6px',fontSize:'11px',overflow:'auto',maxHeight:'400px'}}>
-{`function doPost(e) {
-  const data = JSON.parse(e.postData.contents);
-  const action = e.parameter.action;
+        ${col.clusters.map((cluster, cli) => `
+          <div class="seat-cluster">
+            <div class="seat-cluster-head">
+              <span>CL.${cluster.num}</span>
+              <div>
+                <button class="mini-btn" onclick="addRow(${ci},${cli})">+ Row</button>
+                <button class="mini-btn" onclick="removeCluster(${ci},${cli})">✕</button>
+              </div>
+            </div>
+            ${cluster.rows.map((row, ri) => `
+              <div class="seat-row">
+                ${row.map((name, si) => renderSeat(ci, cli, ri, si, name)).join('')}
+              </div>
+            `).join('')}
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }).join('');
   
-  if (action === 'getState') return getState_();
-  if (action === 'batchAddPoints') return batchAddPoints_(data);
-  if (action === 'addStudent') return addStudent_(data);
-  if (action === 'updateSeating') return updateSeating_(data);
-  
-  return ContentService.createTextOutput(JSON.stringify({error: 'Unknown action'}))
-    .setMimeType(ContentService.MimeType.JSON);
+  buildNotPlaced();
 }
 
-function getState_() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+function renderSeat(ci, cli, ri, si, name) {
+  if (!name) {
+    return `
+      <div class="seat-slot empty"
+        ondragover="event.preventDefault(); this.classList.add('drag-over');"
+        ondragleave="this.classList.remove('drag-over');"
+        ondrop="dropSeat(event,${ci},${cli},${ri},${si})">
+        +
+      </div>
+    `;
+  }
   
-  // Load students
-  const studentsSheet = ss.getSheetByName('Students') || ss.insertSheet('Students');
-  const studentsData = studentsSheet.getDataRange().getValues();
-  const students = [];
-  for (let i = 1; i < studentsData.length; i++) {
-    if (studentsData[i][0]) {
-      students.push({
-        id: studentsData[i][0],
-        name: studentsData[i][1],
-        homeroom: studentsData[i][2]
+  const student = Object.values(STUDENTS).find(s => s.name === name);
+  if (!student) return '';
+  
+  const initials = student.firstName[0] + student.lastName[0];
+  
+  return `
+    <div class="seat-slot filled"
+      draggable="true"
+      ondragstart="dragStart(event,'${name}','seat',${ci},${cli},${ri},${si})"
+      ondragover="event.preventDefault(); this.classList.add('drag-over');"
+      ondragleave="this.classList.remove('drag-over');"
+      ondrop="dropSeat(event,${ci},${cli},${ri},${si})">
+      <div class="initials">${initials}</div>
+      <div>${student.firstName}</div>
+    </div>
+  `;
+}
+
+function buildNotPlaced() {
+  const hr = document.getElementById('seatHomeroom').value;
+  const layout = SEATING[hr] || [];
+  
+  const seated = new Set();
+  layout.forEach(col => {
+    (col.clusters || []).forEach(cluster => {
+      cluster.rows.forEach(row => {
+        row.forEach(name => name && seated.add(name));
       });
-    }
-  }
-  
-  // Calculate points from log
-  const logSheet = ss.getSheetByName('Log') || ss.insertSheet('Log');
-  const logData = logSheet.getDataRange().getValues();
-  const points = {};
-  
-  for (let i = 1; i < logData.length; i++) {
-    const [timestamp, studentId, studentName, homeroom, quarter, category, pts] = logData[i];
-    if (!studentId) continue;
-    
-    if (!points[studentId]) {
-      points[studentId] = {Q1:{}, Q2:{}, Q3:{}, Q4:{}};
-    }
-    
-    if (!points[studentId][quarter]) points[studentId][quarter] = {};
-    if (!points[studentId][quarter][category]) points[studentId][quarter][category] = 0;
-    
-    points[studentId][quarter][category] += Number(pts) || 0;
-  }
-  
-  // Load seating
-  const seatingSheet = ss.getSheetByName('Seating') || ss.insertSheet('Seating');
-  const seatingData = seatingSheet.getDataRange().getValues();
-  const seating = {Columbia:[], Emory:[], Vanderbilt:[]};
-  
-  for (let i = 1; i < seatingData.length; i++) {
-    if (seatingData[i][0] && seatingData[i][1]) {
-      try {
-        seating[seatingData[i][0]] = JSON.parse(seatingData[i][1]);
-      } catch(e) {}
-    }
-  }
-  
-  return ContentService.createTextOutput(JSON.stringify({students, points, seating}))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-
-function batchAddPoints_(data) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const logSheet = ss.getSheetByName('Log') || ss.insertSheet('Log');
-  
-  // Add header if needed
-  if (logSheet.getLastRow() === 0) {
-    logSheet.appendRow(['Timestamp', 'StudentID', 'StudentName', 'Homeroom', 'Quarter', 'Category', 'Points']);
-  }
-  
-  // Append all entries
-  data.entries.forEach(entry => {
-    logSheet.appendRow([
-      entry.timestamp,
-      entry.studentId,
-      entry.studentName,
-      entry.homeroom,
-      entry.quarter,
-      entry.category,
-      entry.points
-    ]);
+    });
   });
   
-  return ContentService.createTextOutput(JSON.stringify({success: true}))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-
-function addStudent_(data) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const studentsSheet = ss.getSheetByName('Students') || ss.insertSheet('Students');
-  
-  if (studentsSheet.getLastRow() === 0) {
-    studentsSheet.appendRow(['ID', 'Name', 'Homeroom']);
-  }
-  
-  const id = 'S' + Date.now();
-  studentsSheet.appendRow([id, data.name, data.homeroom]);
-  
-  return ContentService.createTextOutput(JSON.stringify({success: true, id}))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-
-function updateSeating_(data) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const seatingSheet = ss.getSheetByName('Seating') || ss.insertSheet('Seating');
-  
-  if (seatingSheet.getLastRow() === 0) {
-    seatingSheet.appendRow(['Homeroom', 'Layout']);
-  }
-  
-  const values = seatingSheet.getDataRange().getValues();
-  let found = false;
-  
-  for (let i = 1; i < values.length; i++) {
-    if (values[i][0] === data.homeroom) {
-      seatingSheet.getRange(i + 1, 2).setValue(JSON.stringify(data.layout));
-      found = true;
-      break;
-    }
-  }
-  
-  if (!found) {
-    seatingSheet.appendRow([data.homeroom, JSON.stringify(data.layout)]);
-  }
-  
-  return ContentService.createTextOutput(JSON.stringify({success: true}))
-    .setMimeType(ContentService.MimeType.JSON);
-}`}
-        </pre>
-      </div>
-    </div>
+  const unseated = Object.values(STUDENTS).filter(s => 
+    s.homeroom === hr && !seated.has(s.name)
   );
+  
+  document.getElementById('notPlacedCount').textContent = unseated.length;
+  document.getElementById('notPlacedGrid').innerHTML = unseated.map(s => {
+    const initials = s.firstName[0] + s.lastName[0];
+    return `
+      <div class="student-chip"
+        draggable="true"
+        ondragstart="dragStart(event,'${s.name}','pool')">
+        <span class="init">${initials}</span> ${s.name}
+      </div>
+    `;
+  }).join('');
 }
 
-// Helper functions
-function getStudentTotal(studentId, points) {
-  const studentPoints = points[studentId] || {};
-  return QUARTERS.reduce((sum, q) => {
-    const qData = studentPoints[q] || {};
-    return sum + Object.values(qData).reduce((cSum, v) => cSum + (Number(v) || 0), 0);
-  }, 0);
+function dragStart(e, name, from, ci, cli, ri, si) {
+  DRAG_STUDENT = {name, from};
+  if (from === 'seat') {
+    DRAG_STUDENT.loc = {ci, cli, ri, si};
+  }
+  e.dataTransfer.effectAllowed = 'move';
 }
 
-// Render app
-ReactDOM.render(<App />, document.getElementById('root'));
+function dropSeat(e, ci, cli, ri, si) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('drag-over');
+  
+  if (!DRAG_STUDENT) return;
+  
+  const hr = document.getElementById('seatHomeroom').value;
+  const layout = SEATING[hr];
+  const target = layout[ci].clusters[cli].rows[ri][si];
+  
+  if (DRAG_STUDENT.from === 'seat') {
+    const {ci:oci, cli:ocli, ri:ori, si:osi} = DRAG_STUDENT.loc;
+    layout[oci].clusters[ocli].rows[ori][osi] = target;
+  }
+  
+  layout[ci].clusters[cli].rows[ri][si] = DRAG_STUDENT.name;
+  
+  DRAG_STUDENT = null;
+  buildSeatEditor();
+  saveSeating();
+}
+
+function dropToNotPlaced(e) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('drag-over');
+  
+  if (!DRAG_STUDENT || DRAG_STUDENT.from !== 'seat') return;
+  
+  const hr = document.getElementById('seatHomeroom').value;
+  const {ci, cli, ri, si} = DRAG_STUDENT.loc;
+  SEATING[hr][ci].clusters[cli].rows[ri][si] = null;
+  
+  DRAG_STUDENT = null;
+  buildSeatEditor();
+  saveSeating();
+}
+
+function addCluster(ci) {
+  const hr = document.getElementById('seatHomeroom').value;
+  const layout = SEATING[hr];
+  const maxNum = Math.max(0, ...layout.flatMap(c => c.clusters.map(cl => cl.num)));
+  layout[ci].clusters.push({num: maxNum+1, rows: [[null,null],[null,null]]});
+  buildSeatEditor();
+  saveSeating();
+}
+
+function removeCluster(ci, cli) {
+  const hr = document.getElementById('seatHomeroom').value;
+  if (!confirm('Remove this cluster? Students will go to Not Placed.')) return;
+  SEATING[hr][ci].clusters.splice(cli, 1);
+  buildSeatEditor();
+  saveSeating();
+}
+
+function addRow(ci, cli) {
+  const hr = document.getElementById('seatHomeroom').value;
+  SEATING[hr][ci].clusters[cli].rows.push([null, null]);
+  buildSeatEditor();
+  saveSeating();
+}
+
+function clearSeating() {
+  const hr = document.getElementById('seatHomeroom').value;
+  if (!confirm(`Clear all seats for ${hr}?`)) return;
+  SEATING[hr] = SEATING[hr].map(col => ({
+    clusters: col.clusters.map(cl => ({num: cl.num, rows: cl.rows.map(() => [null,null])}))
+  }));
+  buildSeatEditor();
+  saveSeating();
+}
+
+function defaultSeatLayout() {
+  const hr = document.getElementById('seatHomeroom').value;
+  if (!confirm(`Reset ${hr} to default layout?`)) return;
+  SEATING[hr] = getDefaultLayout();
+  buildSeatEditor();
+  saveSeating();
+}
+
+function getDefaultLayout() {
+  return [
+    {clusters: [{num:1, rows:[[null,null],[null,null]]},{num:2, rows:[[null,null],[null,null]]}]},
+    {clusters: [{num:3, rows:[[null,null],[null,null]]},{num:4, rows:[[null,null],[null,null]]}]},
+    {clusters: [{num:5, rows:[[null,null],[null,null]]},{num:6, rows:[[null,null],[null,null]]}]}
+  ];
+}
+
+// ═══ UI ═══
+function switchTab(tab) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.ntab').forEach(t => t.classList.remove('active'));
+  
+  document.getElementById('page-' + tab).classList.add('active');
+  event.target.classList.add('active');
+  
+  if (tab === 'teacher') buildTeacherGrid();
+  if (tab === 'seating') buildSeatEditor();
+}
+
+function setSyncStatus(status, text) {
+  const pill = document.getElementById('syncPill');
+  pill.className = 'sync-pill ' + status;
+  document.getElementById('syncText').textContent = text;
+}
+
+function updateSaveButton() {
+  const btn = document.getElementById('saveBtn');
+  if (PENDING_SAVES.length > 0) {
+    btn.textContent = `💾 Save (${PENDING_SAVES.length})`;
+    btn.classList.add('pending');
+  } else {
+    btn.textContent = '💾 Saved';
+    btn.classList.remove('pending');
+  }
+}
+
+// ═══ AUTO-SYNC ═══
+setInterval(() => {
+  if (PENDING_SAVES.length > 0) manualSave();
+}, 30000);
+
+setInterval(loadData, 10000);
+
+// ═══ INIT ═══
+window.addEventListener('DOMContentLoaded', () => {
+  loadData();
+});
 </script>
-
-<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
 </body>
 </html>
