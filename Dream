@@ -1253,7 +1253,7 @@ function allActiveDates(){
 
 let LOG = [];
 let SEATING = {Columbia:null, Emory:null, Vanderbilt:null};
-let ACTIVE_Q = 'q4';
+let ACTIVE_Q = 'q1';  // Start on Period 1 (first class of the day)
 let ACTIVE_DATE = todayStr();
 let ACTIVE_CAT = 'focus';
 let TEA_HOMEROOM = 'all';
@@ -2359,7 +2359,13 @@ async function getFromScript(action){
 
 async function pushPointToSheet(entry){
   setSyncStatus('wait','Syncing…');
-  await postToScript('log_point', entry);
+  const result = await postToScript('log_point', entry);
+  if (result.ok){
+    // Subtle confirmation (only show occasionally to avoid spam)
+    if (Math.random() < 0.2){  // 20% chance = ~1 in 5 points shows a toast
+      toast('✓ Synced to Sheet', 'success', 1000);  // 1 sec duration
+    }
+  }
 }
 
 async function pushSeatingToSheet(){
@@ -2528,14 +2534,15 @@ function rerenderAll(){
 // ═══════════════════════════════════════════════════════════════════
 //   TOAST
 // ═══════════════════════════════════════════════════════════════════
-function toast(msg, kind){
+function toast(msg, kind, duration){
   const wrap = document.getElementById('toastWrap');
   const el = document.createElement('div');
   el.className = 'toast' + (kind ? ' '+kind : '');
   el.textContent = msg;
   wrap.appendChild(el);
-  setTimeout(() => { el.style.opacity='0'; el.style.transform='translateY(-6px)'; el.style.transition='all .25s'; }, 2400);
-  setTimeout(() => el.remove(), 2800);
+  const dur = duration || 2400;
+  setTimeout(() => { el.style.opacity='0'; el.style.transform='translateY(-6px)'; el.style.transition='all .25s'; }, dur);
+  setTimeout(() => el.remove(), dur + 400);
 }
 
 // ═══════════════════════════════════════════════════════════════════
