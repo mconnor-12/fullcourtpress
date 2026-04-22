@@ -1862,8 +1862,8 @@ function renderTournament(){
 
 function renderBalls(){
   const layer = document.getElementById('ballsLayer');
-  // Scale target: 15 pts per period, 25 for full day (4 periods), 100 for tournament (allowing for growth)
-  const target = RACE_MODE === 'tournament' ? 100 : (RACE_FILTER === 'total' ? 25 : 15);
+  // Scale target: 25 pts per period, 100 for full day (4 periods), 100 for tournament (allowing for growth)
+  const target = RACE_MODE === 'tournament' ? 100 : (RACE_FILTER === 'total' ? 100 : 25);
   const currentMax = maxRacePts();
   // Use target as scale, but if someone exceeds it, expand to fit
   const mx = Math.max(target, currentMax);
