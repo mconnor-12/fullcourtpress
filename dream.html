@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>🏀 Full Court Race — G7 Homeroom Championship</title>
+<title>🏀 Full Court Press — G7 Homeroom Championship</title>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Mono:wght@300;400;500;700&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
 /* ═══ TOKENS ═══════════════════════════════════════════════════════ */
@@ -916,7 +916,7 @@ input,select{font-family:inherit;}
 <div class="nav">
   <div class="brand">
     <div class="logo"></div>
-    <div>FULL COURT RACE <span class="sub">· G7</span></div>
+    <div>FULL COURT PRESS <span class="sub">· G7</span></div>
   </div>
   <div class="tabs">
     <button class="ntab active" onclick="switchTab('race',this)">🏀 Race</button>
@@ -1144,7 +1144,7 @@ input,select{font-family:inherit;}
         <li>In your Sheet: <code>Extensions → Apps Script</code></li>
         <li>Delete any existing <code>Code.gs</code> content and paste the full script below</li>
         <li>Save (Ctrl/Cmd + S) and close the Apps Script editor</li>
-        <li>Reload the Sheet — you'll see a new <b>🏀 Full Court Race</b> menu appear (may take 5 seconds). Click it → <b>🚀 Set up all tabs</b></li>
+        <li>Reload the Sheet — you'll see a new <b>🏀 Full Court Press</b> menu appear (may take 5 seconds). Click it → <b>🚀 Set up all tabs</b></li>
         <li>Back in Apps Script: <code>Deploy → New deployment → Type: Web app</code></li>
         <li>Execute as: <b>Me</b> · Who has access: <b>Anyone</b> (so anyone with a link can log points)</li>
         <li>Copy the <code>/exec</code> URL and paste into the field above</li>
@@ -1161,7 +1161,7 @@ input,select{font-family:inherit;}
 
     <div class="setup-card">
       <h3>🏀 The Sheet's built-in menu</h3>
-      <p>After installing the script and reloading the Sheet, a <b>🏀 Full Court Race</b> menu appears at the top. Options:</p>
+      <p>After installing the script and reloading the Sheet, a <b>🏀 Full Court Press</b> menu appears at the top. Options:</p>
       <ul>
         <li><b>🚀 Set up all tabs</b> — creates Roster, Totals, Daily Totals, Log, Team Scores, Seating</li>
         <li><b>🔄 Recalc totals now</b> — rebuilds all per-student totals from the Log (useful after editing Log by hand)</li>
@@ -1545,9 +1545,10 @@ function logPoints(id, q, cat, delta, skipSync, forcedDate){
   // Debug logging
   console.log('📊 Point logged:', {student: s.name, quarter: q, category: cat, delta: actual, date, skipSync});
   
+  let syncPromise = Promise.resolve();
   if (!skipSync){
     console.log('🔄 Pushing to Sheet:', entry);
-    pushPointToSheet(entry);
+    syncPromise = pushPointToSheet(entry);
   } else {
     console.log('⏭️ Skipped sync (skipSync=true)');
   }
@@ -1555,6 +1556,8 @@ function logPoints(id, q, cat, delta, skipSync, forcedDate){
   rerenderAll();
   flashDesk(id);
   popBall(id, actual * CAT_BY_KEY[cat].pts);
+  
+  return syncPromise;  // Return promise so caller can await
 }
 
 function undoLast(){
@@ -2238,27 +2241,28 @@ async function applyRosterPoints(){
   
   let totalAdded = 0;
   
-  // Add points for each student and category
+  // Go student-by-student, applying ALL categories to each student before moving to next
   for (const studentId of selectedStudents) {
+    const student = ROSTER_BY_ID[studentId];
+    statusEl.innerHTML = `<span style="color:var(--gold2);">⏳ Syncing ${student.name}...</span>`;
+    
     for (const [catKey, count] of categories) {
       for (let i = 0; i < count; i++) {
-        logPoints(studentId, ACTIVE_Q, catKey, 1, false);
+        await logPoints(studentId, ACTIVE_Q, catKey, 1, false);  // AWAIT each point to prevent skipping
         totalAdded++;
       }
     }
   }
   
-  // Wait for sync confirmation
+  // Sync confirmation
+  statusEl.innerHTML = `<span style="color:var(--green2);">✓ ${totalAdded} points added and synced!</span>`;
+  ROSTER_CATEGORIES.clear();
+  ROSTER_SELECTED.clear();
+  buildRosterView();
+  
   setTimeout(() => {
-    statusEl.innerHTML = `<span style="color:var(--green2);">✓ ${totalAdded} points added and synced!</span>`;
-    ROSTER_CATEGORIES.clear();
-    ROSTER_SELECTED.clear();
-    buildRosterView();
-    
-    setTimeout(() => {
-      statusEl.innerHTML = '';
-    }, 3000);
-  }, 1000);
+    statusEl.innerHTML = '';
+  }, 3000);
 }
 
 function renderSeatingBlock(hr){
@@ -3044,9 +3048,9 @@ function toast(msg, kind, duration){
 //   APPS SCRIPT CODE (served in Setup tab)
 // ═══════════════════════════════════════════════════════════════════
 const APPS_SCRIPT_CODE = `/**
- * Full Court Race — Google Apps Script backend v2
+ * Full Court Press — Google Apps Script backend v2
  * =============================================================
- * Links this Sheet to the Full Court Race web app.
+ * Links this Sheet to the Full Court Press web app.
  * On first run it auto-creates 6 tabs: Roster, Totals, Daily Totals,
  * Log, Team Scores, Seating.
  *
@@ -3054,7 +3058,7 @@ const APPS_SCRIPT_CODE = `/**
  *
  * Setup:
  *  1) Paste this whole file into Apps Script (replace Code.gs)
- *  2) Reload the Sheet — "🏀 Full Court Race" menu appears
+ *  2) Reload the Sheet — "🏀 Full Court Press" menu appears
  *  3) Menu → Set up all tabs  (one-time; creates empty tabs)
  *  4) Deploy > New deployment > Web app
  *     Execute as: Me  |  Who has access: Anyone
@@ -3069,7 +3073,7 @@ const QUARTERS   = ['q1','q2','q3','q4'];
 
 // ═════ Menu (runs when Sheet opens) ═════
 function onOpen(){
-  SpreadsheetApp.getUi().createMenu('🏀 Full Court Race')
+  SpreadsheetApp.getUi().createMenu('🏀 Full Court Press')
     .addItem('🚀 Set up all tabs',      'menuSetupTabs')
     .addItem('🔄 Recalc totals now',    'menuRecalcTotals')
     .addItem('📊 Recalc team scores',   'menuRecalcTeams')
@@ -3085,7 +3089,7 @@ function onOpen(){
 }
 function menuSetupTabs(){
   ensureSheets_();
-  SpreadsheetApp.getUi().alert('✓ All tabs set up.\\n\\nNext steps:\\n1. Deploy → New deployment → Web app\\n2. Copy the /exec URL into the Full Court Race app Setup tab\\n3. Click "Push everything" to seed the roster');
+  SpreadsheetApp.getUi().alert('✓ All tabs set up.\\n\\nNext steps:\\n1. Deploy → New deployment → Web app\\n2. Copy the /exec URL into the Full Court Press app Setup tab\\n3. Click "Push everything" to seed the roster');
 }
 function menuRecalcTotals(){
   ensureSheets_();
